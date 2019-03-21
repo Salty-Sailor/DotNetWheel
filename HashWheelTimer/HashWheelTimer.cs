@@ -4,49 +4,49 @@ using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace HashWheelTimer
+namespace UselessWheel
 {
-    public class HashWheelTimer
+    public class HashedWheelTimer
     {
-        private int tickDuration;//ms
+        private readonly int tickDuration;//ms
         private readonly int maxTimeout;
-        private readonly int wheelSize;
-        private long currentIndex = 0;
-        private readonly object[] slotLock;
-        private Queue<Action>[] slot;
-        private Stopwatch sw = new Stopwatch();
-        private CancellationTokenSource cts;
-        private CancellationToken cToken;
+        private readonly int size;
+        private int currentIndex = 0;
+        private readonly object slotLock = new object();
+        private readonly Queue<Action>[] wheelBuckets;
+        private readonly Stopwatch sw = new Stopwatch();
+        private readonly CancellationTokenSource cancel;
 
-        public HashWheelTimer(int duration = 50, int maxto = 5000)
+        /// <summary>
+        /// Constructor
+        /// </summary>
+        /// <param name="duration">time accuracy</param>
+        /// <param name="maxto">max delay time in this timerwheel</param>
+        public HashedWheelTimer(int duration = 50, int maxto = 5000)
         {
             Debug.Assert(duration > 0);
             Debug.Assert(maxto > 0 && maxto >= duration);
 
-            cts = new CancellationTokenSource();
-            cToken = cts.Token;
-
+            cancel = new CancellationTokenSource();
             tickDuration = duration;
             maxTimeout = maxto;
 
             if (maxTimeout % duration == 0)
             {
-                wheelSize = maxTimeout / duration;
+                size = maxTimeout / duration;
             }
             else
             {
-                wheelSize = ( maxTimeout / duration ) + 1;
+                size = maxTimeout / duration + 1;
             }
 
-            slot = new Queue<Action>[wheelSize];
-            slotLock = new object[wheelSize];
-            for (int i = 0; i < wheelSize; i++)
+            wheelBuckets = new Queue<Action>[size];
+            for (int i = 0; i < size; i++)
             {
-                slot[i] = new Queue<Action>();
-                slotLock[i] = new object();
+                wheelBuckets[i] = new Queue<Action>();
             }
 
-            Task.Run(async () =>
+            var t = new Task(async () =>
             {
                 sw.Start();
                 var execCount = 0;
@@ -54,7 +54,7 @@ namespace HashWheelTimer
                 {
                     if (( sw.ElapsedMilliseconds / tickDuration ) > execCount)
                     {
-                        doWork();
+                        fire();
                         execCount++;
                     }
                     else
@@ -62,51 +62,54 @@ namespace HashWheelTimer
                         await Task.Delay(tickDuration);
                     }
                 }
-            }, cToken);
+            }, cancel.Token);
+            t.Start();
         }
 
         public void Stop()
         {
-            cts.Cancel();
+            cancel.Cancel();
         }
 
         public void Schedule(Action cb, int delayTime)
         {
-            if (delayTime > maxTimeout)
+            if (delayTime > maxTimeout || delayTime < 0)
             {
-                throw new Exception($"schedule timeout:{delayTime} larger than maxTimeout:{maxTimeout}");
+                throw new Exception($"schedule timeout:{delayTime} Invalid");
             }
 
-            int timeOffset = calOffset(delayTime);
-            var cur = (int)Interlocked.Read(ref currentIndex);
-            int scheduleIndex = ( cur + timeOffset ) % wheelSize;
-
-            lock (slotLock[scheduleIndex])
+            int timeOffset = calculateOffset(delayTime);
+            lock (slotLock)
             {
-                slot[scheduleIndex].Enqueue(cb);
+                int bucketIndex = ( currentIndex + timeOffset ) % size;
+                wheelBuckets[bucketIndex].Enqueue(cb);
             }
         }
 
-        private void doWork()
+        private void fire()
         {
-            currentIndex = ( ++currentIndex ) % wheelSize;
-            lock (slotLock[currentIndex])
+            lock (slotLock)
             {
-                while (slot[currentIndex].Count > 0)
+                currentIndex = ( ++currentIndex ) % size;
+                while (wheelBuckets[currentIndex].Count > 0)
                 {
-                    slot[currentIndex].Dequeue().Invoke();
+                    try
+                    {
+                        wheelBuckets[currentIndex].Dequeue().Invoke();
+                    }
+                    catch (Exception) { }
                 }
             }
         }
 
-        private int calOffset(int time)
+        private int calculateOffset(int time)
         {
             if (time % tickDuration == 0 && time != 0)
             {
                 return time / tickDuration;
             }
 
-            return ( time / tickDuration ) + 1;
+            return time / tickDuration + 1;
         }
     }
 }
