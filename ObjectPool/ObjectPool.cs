@@ -11,7 +11,7 @@ namespace UselessWheel
     public sealed class ObjectPool<T> where T : IRecyclable
     {
         private readonly Channel<T> pool;
-        private Func<T> factoryFunc;
+        private readonly Func<T> factoryFunc;
 
         public ObjectPool(Func<T> objectFactory)
         {

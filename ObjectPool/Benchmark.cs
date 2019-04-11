@@ -1,11 +1,9 @@
-using System;
-using System.Collections.Generic;
-using System.Text;
 using System.Threading.Tasks;
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Running;
+using UselessWheel;
 
-namespace UselessWheel
+namespace Benchmark
 {
     //FIXME need better benchmark cases
     public class Benchmark
