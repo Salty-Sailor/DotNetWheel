@@ -24,16 +24,17 @@ namespace UselessWheel
 
         static UnixTime()
         {
+            second = (long)( DateTime.UtcNow - DateTime.UnixEpoch ).TotalSeconds;
+
             Task.Factory.StartNew(async () =>
             {
                 var sleepTime = new TimeSpan(0, 0, 1);
-                second = (long)( DateTime.UtcNow - DateTime.UnixEpoch ).TotalSeconds;
                 while (true)
                 {
                     await Task.Delay(sleepTime);
-                    Interlocked.Add(ref second, 1);
+                    Interlocked.Exchange(ref second, (long)( DateTime.UtcNow - DateTime.UnixEpoch ).TotalSeconds);
                 }
-            }, TaskCreationOptions.LongRunning);
+            });
         }
     }
 }
