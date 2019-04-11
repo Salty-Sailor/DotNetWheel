@@ -30,8 +30,8 @@ namespace UselessWheel
                 second = (long)( DateTime.UtcNow - DateTime.UnixEpoch ).TotalSeconds;
                 while (true)
                 {
-                    Interlocked.Add(ref second, 1);
                     await Task.Delay(sleepTime);
+                    Interlocked.Add(ref second, 1);
                 }
             }, TaskCreationOptions.LongRunning);
         }
