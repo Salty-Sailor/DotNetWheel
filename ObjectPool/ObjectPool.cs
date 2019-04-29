@@ -1,41 +1,92 @@
 using System;
-using System.Threading.Channels;
+using System.Diagnostics;
+using System.Runtime.CompilerServices;
+using System.Threading;
 
+//In Microsoft.Extensions.ObjectPool(https://source.dot.net/#Microsoft.Extensions.ObjectPool/DefaultObjectPool.cs,3a81fc115b37d15f)
+//There is a high performance implemention of lock free object pool,
+//copy from them so that could use it in Unity
 namespace UselessWheel
 {
-    public interface IRecyclable
+    public interface IPooledObjectPolicy<T>
     {
-        void Recycle();
+        T Create();
+
+        bool Return(T obj);
     }
 
-    public sealed class ObjectPool<T> where T : IRecyclable
+    public abstract class PooledObjectPolicy<T> : IPooledObjectPolicy<T>
     {
-        private readonly Channel<T> pool;
-        private readonly Func<T> factoryFunc;
+        public abstract T Create();
 
-        public ObjectPool(Func<T> objectFactory)
+        public abstract bool Return(T obj);
+    }
+
+    public class ObjectPool<T> where T : class
+    {
+        private protected T _firstItem;
+        private protected readonly ObjectWrapper[] _items;
+        private protected readonly IPooledObjectPolicy<T> _policy;
+
+        // This class was introduced to avoid the interface call where possible
+        private protected readonly PooledObjectPolicy<T> _fastPolicy;
+
+        public ObjectPool(IPooledObjectPolicy<T> policy, int maximumRetained = 0)
         {
-            pool = Channel.CreateBounded<T>(1024);
-            factoryFunc = objectFactory;
+            if (maximumRetained <= 0)
+            {
+                maximumRetained = Environment.ProcessorCount * 2;
+            }
+
+            _items = new ObjectWrapper[maximumRetained - 1];
+            _policy = policy ?? throw new ArgumentNullException(nameof(policy));
+            _fastPolicy = policy as PooledObjectPolicy<T>;
         }
 
-        public T GetObject()
+        public T Get()
         {
-            if (pool.Reader.TryRead(out var t))
+            var item = _firstItem;
+            if (item == null || Interlocked.CompareExchange(ref _firstItem, null, item) != item)
             {
-                return t;
+                var items = _items;
+                for (var i = 0; i < items.Length; i++)
+                {
+                    item = items[i].Element;
+                    if (item != null && Interlocked.CompareExchange(ref items[i].Element, null, item) == item)
+                    {
+                        return item;
+                    }
+                }
+
+                item = Create();
             }
-            return factoryFunc.Invoke();
+
+            return item;
         }
 
-        public void PutObject(T item)
+        // Non-inline to improve its code quality as uncommon path
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private T Create() => _fastPolicy?.Create() ?? _policy.Create();
+
+        public void Return(T obj)
         {
-            try
+            if (_fastPolicy?.Return(obj) ?? _policy.Return(obj))
             {
-                item.Recycle();
-                pool.Writer.TryWrite(item);
+                if (_firstItem != null || Interlocked.CompareExchange(ref _firstItem, obj, null) != null)
+                {
+                    var items = _items;
+                    for (var i = 0; i < items.Length && Interlocked.CompareExchange(ref items[i].Element, obj, null) != null; ++i)
+                    {
+                    }
+                }
             }
-            catch (Exception) { }
+        }
+
+        // PERF: the struct wrapper avoids array-covariance-checks from the runtime when assigning to elements of the array.
+        [DebuggerDisplay("{Element}")]
+        private protected struct ObjectWrapper
+        {
+            public T Element;
         }
     }
 }

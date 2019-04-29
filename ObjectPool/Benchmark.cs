@@ -1,3 +1,4 @@
+using System;
 using System.Threading.Tasks;
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Running;
@@ -8,14 +9,22 @@ namespace Benchmark
     //FIXME need better benchmark cases
     public class Benchmark
     {
-        private class TestClass : IRecyclable
+        private class TestClass { }
+
+        public class DefaultPooledObjectPolicy<T> : PooledObjectPolicy<T> where T : class, new()
         {
-            public void Recycle()
+            public override T Create()
             {
+                return new T();
+            }
+
+            public override bool Return(T obj)
+            {
+                return true;
             }
         }
 
-        private readonly ObjectPool<TestClass> oPool = new ObjectPool<TestClass>(() => new TestClass());
+        private readonly ObjectPool<TestClass> objectPool = new ObjectPool<TestClass>(new DefaultPooledObjectPolicy<TestClass>());
 
         [Benchmark]
         public void ObjectPoolBenchmark()
@@ -29,8 +38,8 @@ namespace Benchmark
                 {
                     for (int j = 0; j < iterationTimes; j++)
                     {
-                        var obj = oPool.GetObject();
-                        oPool.PutObject(obj);
+                        var obj = objectPool.Get();
+                        objectPool.Return(obj);
                     }
                 });
             }
